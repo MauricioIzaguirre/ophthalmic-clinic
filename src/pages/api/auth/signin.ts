@@ -63,7 +63,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
       return new Response(
         JSON.stringify({ 
           error: 'Validation failed',
-          issues: error.errors 
+          issues: error.issues // Corregido: error.issues en lugar de error.errors
         }),
         { 
           status: 400,
