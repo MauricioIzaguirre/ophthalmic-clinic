@@ -10,7 +10,7 @@ export const users = pgTable('users', {
   email: varchar('email', { length: 255 }).notNull().unique(),
   passwordHash: text('password_hash').notNull(),
   role: varchar('role', { length: 20 }).notNull().default('patient'),
-  isActive: boolean('is_active').default(true),
+  isActive: boolean('is_active').notNull().default(true), // Cambió: agregué notNull()
   ...timestamps
 });
 

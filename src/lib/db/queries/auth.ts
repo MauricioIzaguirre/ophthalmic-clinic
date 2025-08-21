@@ -1,20 +1,20 @@
 import { eq } from 'drizzle-orm';
 import { db } from '../drizzle';
-import { users, clinicMembers, clinics } from '../schema';
+import { users, clinicMembers } from '../schema';
 import { comparePasswords, hashPassword } from '../../auth/session';
 import type { LoginCredentials, SignUpData } from '../../types/auth';
 import type { User } from '../schema';
 
 export async function authenticateUser(credentials: LoginCredentials): Promise<User | null> {
-  const user = await db
+  const result: User[] = await db
     .select()
     .from(users)
     .where(eq(users.email, credentials.email))
     .limit(1);
     
-  if (user.length === 0) return null;
+  if (result.length === 0) return null;
   
-  const foundUser = user[0];
+  const foundUser = result[0];
   
   // Verificar que el usuario esté activo
   if (!foundUser.isActive || foundUser.deletedAt) {
@@ -32,7 +32,7 @@ export async function authenticateUser(credentials: LoginCredentials): Promise<U
 
 export async function registerUser(signUpData: SignUpData): Promise<User> {
   // Verificar que el email no esté en uso
-  const existingUser = await db
+  const existingUser: User[] = await db
     .select()
     .from(users)
     .where(eq(users.email, signUpData.email))
@@ -46,7 +46,7 @@ export async function registerUser(signUpData: SignUpData): Promise<User> {
   const passwordHash = await hashPassword(signUpData.password);
   
   // Crear usuario
-  const newUser = await db
+  const newUser: User[] = await db
     .insert(users)
     .values({
       name: signUpData.name,
@@ -74,6 +74,9 @@ export async function registerUser(signUpData: SignUpData): Promise<User> {
 }
 
 export async function getUserSession(userId: number) {
+  // Importación dinámica para evitar dependencia circular
+  const { clinics } = await import('../schema');
+  
   const result = await db
     .select({
       id: users.id,
@@ -81,11 +84,9 @@ export async function getUserSession(userId: number) {
       email: users.email,
       role: users.role,
       isActive: users.isActive,
-      clinics: {
-        id: clinics.id,
-        name: clinics.name,
-        role: clinicMembers.role
-      }
+      clinicId: clinics.id,
+      clinicName: clinics.name,
+      memberRole: clinicMembers.role
     })
     .from(users)
     .leftJoin(clinicMembers, eq(users.id, clinicMembers.userId))
@@ -101,8 +102,12 @@ export async function getUserSession(userId: number) {
     role: result[0].role,
     isActive: result[0].isActive,
     clinics: result
-      .filter(r => r.clinics.id)
-      .map(r => r.clinics)
+      .filter(r => r.clinicId)
+      .map(r => ({
+        id: r.clinicId!,
+        name: r.clinicName!,
+        role: r.memberRole!
+      }))
   };
   
   return user;

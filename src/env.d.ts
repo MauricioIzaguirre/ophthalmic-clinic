@@ -6,7 +6,10 @@ interface ImportMetaEnv {
   readonly AUTH_SECRET: string;
   readonly STRIPE_SECRET_KEY: string;
   readonly STRIPE_WEBHOOK_SECRET: string;
-  readonly NODE_ENV: 'development' | 'production';
+  readonly BASE_URL: string;
+  readonly NODE_ENV: 'development' | 'production' | 'test';
+  readonly PROD: boolean;
+  readonly DEV: boolean;
 }
 
 interface ImportMeta {
@@ -20,7 +23,7 @@ declare namespace App {
       name: string | null;
       email: string;
       role: string;
-      isActive: boolean;
+      isActive: boolean; // Ahora siempre boolean
       clinics?: Array<{
         id: number;
         name: string;

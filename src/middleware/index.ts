@@ -1,60 +1,144 @@
 import { defineMiddleware } from 'astro:middleware';
 import { verifyToken } from '../lib/auth/session';
 import { getUserSession } from '../lib/db/queries/auth';
-import type { SessionData } from '../lib/types';
+
+const PUBLIC_ROUTES = [
+  '/',
+  '/auth/signin',
+  '/auth/signup',
+  '/pricing',
+  '/about',
+  '/contact'
+];
+
+const API_AUTH_ROUTES = [
+  '/api/auth/signin',
+  '/api/auth/signup',
+  '/api/auth/signout'
+];
+
+function isPublicRoute(pathname: string): boolean {
+  return (
+    PUBLIC_ROUTES.includes(pathname) ||
+    API_AUTH_ROUTES.includes(pathname) ||
+    pathname.startsWith('/_') ||
+    pathname.startsWith('/api/public') ||
+    pathname.includes('favicon') ||
+    pathname.includes('.') // Archivos estáticos
+  );
+}
+
+function isAuthRoute(pathname: string): boolean {
+  return pathname === '/auth/signin' || pathname === '/auth/signup';
+}
+
+function isProtectedRoute(pathname: string): boolean {
+  return pathname.startsWith('/dashboard') || pathname.startsWith('/api/protected');
+}
 
 export const onRequest = defineMiddleware(async (context, next) => {
   const { url, cookies, locals } = context;
   const { pathname } = url;
-  
-  // Rutas públicas que no requieren autenticación
-  const publicRoutes = ['/', '/auth/signin', '/auth/signup', '/pricing', '/api/auth/signin', '/api/auth/signup'];
-  const isPublicRoute = publicRoutes.includes(pathname) || pathname.startsWith('/_');
-  
-  // Obtener token de sesión
-  const sessionCookie = cookies.get('session');
   
   // Inicializar contexto local
   locals.user = null;
   locals.isAuthenticated = false;
   locals.sessionData = null;
   
-  if (sessionCookie?.value) {
-    try {
-      // Verificar y decodificar token
-      const sessionData = await verifyToken(sessionCookie.value);
-      
-      // Verificar si la sesión no ha expirado
-      if (new Date(sessionData.expires) > new Date()) {
-        // Obtener datos actualizados del usuario
-        const user = await getUserSession(sessionData.user.id);
+  // Permitir rutas públicas sin verificación
+  if (isPublicRoute(pathname)) {
+    // Aún así, intentar obtener datos de usuario si hay sesión
+    const sessionCookie = cookies.get('session');
+    
+    if (sessionCookie?.value) {
+      try {
+        const sessionData = await verifyToken(sessionCookie.value);
         
-        if (user && user.isActive) {
-          locals.user = user;
-          locals.isAuthenticated = true;
-          locals.sessionData = sessionData;
+        if (new Date(sessionData.expires) > new Date()) {
+          const user = await getUserSession(sessionData.user.id);
+          
+          if (user && user.isActive) {
+            locals.user = user;
+            locals.isAuthenticated = true;
+            locals.sessionData = sessionData;
+          }
+        } else {
+          // Token expirado
+          cookies.delete('session', { path: '/' });
         }
-      } else {
-        // Token expirado, limpiar cookie
+      } catch (error) {
+        // Token inválido
         cookies.delete('session', { path: '/' });
       }
-    } catch (error) {
-      // Token inválido, limpiar cookie
-      cookies.delete('session', { path: '/' });
     }
+    
+    // Redireccionar usuarios autenticados desde páginas de auth
+    if (isAuthRoute(pathname) && locals.isAuthenticated) {
+      const redirectTo = url.searchParams.get('redirect') || '/dashboard';
+      return Response.redirect(new URL(redirectTo, url).toString());
+    }
+    
+    return next();
   }
   
-  // Proteger rutas del dashboard
-  if (pathname.startsWith('/dashboard') && !locals.isAuthenticated) {
-    const redirectUrl = new URL('/auth/signin', url);
-    redirectUrl.searchParams.set('redirect', pathname);
-    return Response.redirect(redirectUrl.toString());
+  // Para rutas protegidas, validar sesión
+  const sessionCookie = cookies.get('session');
+  
+  if (!sessionCookie?.value) {
+    if (isProtectedRoute(pathname)) {
+      const redirectUrl = new URL('/auth/signin', url);
+      redirectUrl.searchParams.set('redirect', pathname);
+      return Response.redirect(redirectUrl.toString());
+    }
+    return next();
   }
   
-  // Redireccionar usuarios autenticados desde páginas de auth
-  if ((pathname === '/auth/signin' || pathname === '/auth/signup') && locals.isAuthenticated) {
-    return Response.redirect(new URL('/dashboard', url).toString());
+  try {
+    const sessionData = await verifyToken(sessionCookie.value);
+    
+    // Verificar expiración
+    if (new Date(sessionData.expires) <= new Date()) {
+      cookies.delete('session', { path: '/' });
+      
+      if (isProtectedRoute(pathname)) {
+        const redirectUrl = new URL('/auth/signin', url);
+        redirectUrl.searchParams.set('redirect', pathname);
+        return Response.redirect(redirectUrl.toString());
+      }
+      return next();
+    }
+    
+    // Obtener datos actualizados del usuario
+    const user = await getUserSession(sessionData.user.id);
+    
+    if (!user || !user.isActive) {
+      cookies.delete('session', { path: '/' });
+      
+      if (isProtectedRoute(pathname)) {
+        const redirectUrl = new URL('/auth/signin', url);
+        redirectUrl.searchParams.set('redirect', pathname);
+        return Response.redirect(redirectUrl.toString());
+      }
+      return next();
+    }
+    
+    // Usuario válido, establecer contexto
+    locals.user = user;
+    locals.isAuthenticated = true;
+    locals.sessionData = sessionData;
+    
+    return next();
+    
+  } catch (error) {
+    console.error('Session validation error:', error);
+    cookies.delete('session', { path: '/' });
+    
+    if (isProtectedRoute(pathname)) {
+      const redirectUrl = new URL('/auth/signin', url);
+      redirectUrl.searchParams.set('redirect', pathname);
+      return Response.redirect(redirectUrl.toString());
+    }
+    
+    return next();
   }
-  
-  return next();
 });
